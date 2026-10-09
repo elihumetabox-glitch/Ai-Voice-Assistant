@@ -14,6 +14,7 @@ The process entrypoints are:
 | Credential broker | `python -m uvicorn backend.credential_broker.main:app --host 0.0.0.0 --port $PORT` | No public domain or public ingress. The API reaches it using Railway private networking and request HMAC authentication. |
 | LiveKit worker | `python agent/agent.py start` | No public domain. It connects outbound to LiveKit and the API. |
 | Calendar booking worker | `python -m backend.booking_worker` | No public domain. It polls the dedicated Neon booking queue and calls the private credential broker. |
+| 3CX Connector Supervisor | `node run-supervisor.mjs` (Root Directory `/connector`) | No public domain. Connects outbound to 3CX PBXs, LiveKit Cloud, and private Credential Broker. |
 
 Railway should build each service from the same GitHub repository, branch, and root Dockerfile, with the root as the build context. Configure the service-specific start command in Railway. The API and broker listen on Railway's injected `$PORT`; do not hard-code a container port. The worker services are long-running processes, not public HTTP APIs. The LiveKit worker health/metrics listener uses port `8081` in the current code; do not create public ingress for it.
 
@@ -109,6 +110,21 @@ The LiveKit worker must not receive `DATABASE_URL`, `DATABASE_URL_UNPOOLED`, Goo
 | `CREDENTIAL_BROKER_SHARED_SECRET` | Secret | Same broker HMAC key used by the API and broker. |
 
 The booking worker must not receive the general `DATABASE_URL`, Google OAuth client credentials, credential encryption key, LiveKit credentials, or Gemini key.
+
+### 3CX Connector Supervisor service
+
+| Variable | Type | Notes |
+| --- | --- | --- |
+| `CREDENTIAL_BROKER_URL` | Internal URL | Private Railway hostname for the credential broker, e.g. `http://credential-broker.railway.internal:8001`. |
+| `CREDENTIAL_BROKER_SHARED_SECRET` | Secret | Same broker HMAC key shared with API, broker, and booking worker. |
+| `LIVEKIT_URL` | Service credential/configuration | LiveKit Cloud WebSocket URL, e.g. `wss://ai-voice-assistant-vu6rr406.livekit.cloud`. |
+| `LIVEKIT_API_KEY` | Secret | LiveKit server credential. |
+| `LIVEKIT_API_SECRET` | Secret | LiveKit server credential. |
+| `LIVEKIT_SESSION_CONTEXT_SECRET` | Secret | Same value as API and worker. |
+| `LIVEKIT_AGENT_NAME` | Ordinary setting | Defaults to `calendar-assistant`. |
+| `RECONCILE_INTERVAL_MS` | Ordinary setting | Tenant reconciliation polling frequency; defaults to `15000` (15s). |
+
+The 3CX Connector Supervisor discovers all active companies dynamically via `GET /internal/v1/threecx/active-tenants` and runs isolated call runtimes for each account configured in the web app's Integrations page.
 
 ### Separately hosted or local Next.js frontend
 
