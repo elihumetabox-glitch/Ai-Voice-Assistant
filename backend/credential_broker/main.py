@@ -499,3 +499,81 @@ async def threecx_acquire_tenant_lease(request: TenantLeaseRequest, _authorized:
 async def threecx_release_tenant_lease(lease_id: str, _authorized: bool = Depends(require_broker_secret)):
     return {"released": True, "leaseId": lease_id}
 
+
+class ClaimCallRequest(BaseModel):
+    companyId: str
+    pbxCallId: str
+    eventId: str
+    eventType: str
+    did: str
+    direction: str
+    leaseSeconds: int = 45
+
+
+@app.post("/internal/v1/threecx/claim-call")
+async def threecx_claim_call(request: ClaimCallRequest, _authorized: bool = Depends(require_broker_secret)):
+    from db.threecx import claim_threecx_call
+    res = await claim_threecx_call(
+        company_id=request.companyId,
+        pbx_call_id=request.pbxCallId,
+        event_id=request.eventId,
+        event_type=request.eventType,
+        did=request.did,
+        direction=request.direction,
+        lease_seconds=request.leaseSeconds,
+    )
+    if res.get("call"):
+        serialized_call = {}
+        for k, v in res["call"].items():
+            if isinstance(v, uuid.UUID):
+                serialized_call[k] = str(v)
+            elif isinstance(v, datetime):
+                serialized_call[k] = v.isoformat()
+            else:
+                serialized_call[k] = v
+        res["call"] = serialized_call
+    return res
+
+
+class TransitionCallRequest(BaseModel):
+    companyId: str
+    pbxCallId: str
+    claimToken: str
+    expectedState: str
+    newState: str
+    livekitDispatchId: str | None = None
+
+
+@app.post("/internal/v1/threecx/transition-call")
+async def threecx_transition_call(request: TransitionCallRequest, _authorized: bool = Depends(require_broker_secret)):
+    from db.threecx import transition_threecx_call
+    success = await transition_threecx_call(
+        company_id=request.companyId,
+        pbx_call_id=request.pbxCallId,
+        claim_token=uuid.UUID(request.claimToken),
+        expected_state=request.expectedState,
+        new_state=request.newState,
+        livekit_dispatch_id=request.livekitDispatchId,
+    )
+    return {"success": success}
+
+
+class RenewCallLeaseRequest(BaseModel):
+    companyId: str
+    pbxCallId: str
+    claimToken: str
+    leaseSeconds: int = 45
+
+
+@app.post("/internal/v1/threecx/renew-call-lease")
+async def threecx_renew_call_lease(request: RenewCallLeaseRequest, _authorized: bool = Depends(require_broker_secret)):
+    from db.threecx import renew_threecx_call_lease
+    renewed = await renew_threecx_call_lease(
+        company_id=request.companyId,
+        pbx_call_id=request.pbxCallId,
+        claim_token=uuid.UUID(request.claimToken),
+        lease_seconds=request.leaseSeconds,
+    )
+    return {"renewed": renewed}
+
+
