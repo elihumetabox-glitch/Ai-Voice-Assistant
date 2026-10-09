@@ -1,3 +1,29 @@
+import fs from 'node:fs';
+
+// Safely load local .env file if it exists and variables are not already set
+if (fs.existsSync('.env')) {
+  try {
+    if (typeof process.loadEnvFile === 'function') {
+      process.loadEnvFile('.env');
+    } else {
+      const content = fs.readFileSync('.env', 'utf8');
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+          const idx = trimmed.indexOf('=');
+          if (idx > 0) {
+            const key = trimmed.slice(0, idx).trim();
+            const val = trimmed.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+            if (!process.env[key]) process.env[key] = val;
+          }
+        }
+      }
+    }
+  } catch {
+    // Non-fatal if loading local .env fails
+  }
+}
+
 const required = ['EXPO_PUBLIC_APP_URL', 'EXPO_PUBLIC_BACKEND_URL'];
 const forbidden = /(?:localhost|127\.0\.0\.1|0\.0\.0\.0)/i;
 const secretName = /(SECRET|PASSWORD|DATABASE_URL|PRIVATE_KEY|API_KEY)/i;

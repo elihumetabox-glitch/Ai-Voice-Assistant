@@ -5,7 +5,8 @@
     "build": "npm --prefix frontend run build",
     "start": "npm --prefix frontend run start",
     "test:3cx": "npm --prefix connector test",
-    "test:3cx-audio": "npm --prefix connector test"
+    "test:3cx-audio": "npm --prefix connector test",
+    "eas-build-pre-install": "npm config set legacy-peer-deps true"
   },
   "dependencies": {
     "@neon/config": "^1.7.0",
