@@ -42,6 +42,7 @@ Any credentials, database endpoints, authentication endpoints, or services belon
   - `http://localhost:3000`
   - `http://127.0.0.1:3000`
   - `http://localhost:8000`
+  - `https://ai-voice-assistants.vercel.app`
 
 ### C. LiveKit WebRTC Real-Time Media Transport
 - **LiveKit Cloud URL**: `wss://ai-voice-assistant-vu6rr406.livekit.cloud`
@@ -50,12 +51,19 @@ Any credentials, database endpoints, authentication endpoints, or services belon
 
 ### D. Google Multimodal Live & OAuth Integration
 - **Google Cloud Project**: `0944069925` / `921027457755`
-- **OAuth Callback Endpoint**: `http://localhost:8000/auth/google/callback`
+- **OAuth Client ID**: `921027457755-kf4epo0unnhnhno0ug71jepv5bo52um0.apps.googleusercontent.com`
+- **Authorized JavaScript Origins**:
+  - `http://localhost:3000`
+  - `http://127.0.0.1:3000`
+  - `https://ai-voice-assistants.vercel.app`
+- **Authorized Redirect URIs / Callback Endpoints**:
+  - `http://localhost:8000/auth/google/callback`
+  - `https://ai-voice-assistants.vercel.app/auth/google/callback`
 - **Google OAuth Test Users**: `anesu@intern-mail.metabox.technology`, `vayen@intern-mail.metabox.technology`
 
 ### E. Railway & Backend Deployment Environment
 - **Backend Host**: `127.0.0.1:8000` (Local) / Dedicated Railway instance
-- **CORS Allowed Origins**: `http://localhost:3000`, `http://127.0.0.1:3000`
+- **CORS Allowed Origins**: `http://localhost:3000`, `http://127.0.0.1:3000`, `https://ai-voice-assistants.vercel.app`
 - **Strict Tenant Enforcement**: All requests require signed session context matching authorized accounts.
 
 ---

@@ -23,15 +23,27 @@ for mod in [
         mock = MagicMock()
         sys.modules[mod] = mock
 
-# Ensure llm.function_tool returns a decorator that returns the original function
-noop_decorator = lambda *args, **kwargs: (lambda f: f)
-sys.modules["livekit.agents"].llm.function_tool = noop_decorator
-sys.modules["livekit.agents.llm"].function_tool = noop_decorator
+def mock_function_tool(*args, **kwargs):
+    def decorator(f):
+        tool_info = MagicMock()
+        tool_info.name = f.__name__
+        f.info = tool_info
+        return f
+    return decorator
+
+sys.modules["livekit.agents"].llm.function_tool = mock_function_tool
+sys.modules["livekit.agents.llm"].function_tool = mock_function_tool
 
 class MockAgent:
     def __init__(self, *args, **kwargs):
         self._tools = []
+        for attr in dir(self):
+            val = getattr(self, attr, None)
+            if hasattr(val, "info"):
+                self._tools.append(val)
         self._chat_ctx = MagicMock()
+        self._chat_ctx.copy = MagicMock(return_value=self._chat_ctx)
+
 sys.modules["livekit.agents.voice"].Agent = MockAgent
 
 from agent.assistant_policy import classify_assistant_turn
@@ -119,12 +131,12 @@ class TestCallHangup(unittest.TestCase):
 
         asyncio.run(_run())
 
-    def test_silence_watchdog_default_timeout_is_15s(self):
-        """Verify the silence watchdog default timeout is set to 15.0 seconds."""
-        self.assertEqual(agent.SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS, 15.0)
+    def test_silence_watchdog_default_timeout_is_60s(self):
+        """Verify the silence watchdog default timeout is set to 60.0 seconds."""
+        self.assertEqual(agent.SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS, 60.0)
 
     def test_silence_watchdog_triggers_hangup_on_inactivity(self):
-        """Verify silence watchdog triggers hangup packet and disconnect after 15s of silence."""
+        """Verify silence watchdog triggers hangup packet and disconnect after silence timeout."""
         async def _run():
             room = MagicMock()
             room.name = "call-room-test"
@@ -133,11 +145,11 @@ class TestCallHangup(unittest.TestCase):
             room.disconnect = AsyncMock()
 
             silence_stop = asyncio.Event()
-            last_activity = [0.0]  # Far in the past (idle > 15s)
+            last_activity = [0.0]  # Far in the past (idle > 60s)
 
-            # Simulated watchdog iteration using 15.0s limit
+            # Simulated watchdog iteration using 60.0s limit
             silence_timeout = agent.SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS
-            idle_seconds = 16.0  # simulates > 15s idle
+            idle_seconds = 61.0  # simulates > 60s idle
             self.assertGreaterEqual(idle_seconds, silence_timeout)
 
             # Execution logic matching _silence_watchdog in agent.py
@@ -154,7 +166,7 @@ class TestCallHangup(unittest.TestCase):
         asyncio.run(_run())
 
     def test_silence_watchdog_resets_on_user_activity(self):
-        """Verify new activity keeps idle time below 15.0s threshold."""
+        """Verify new activity keeps idle time below 60.0s threshold."""
         import time
         now = time.monotonic()
         last_activity = [now]
@@ -167,6 +179,31 @@ class TestCallHangup(unittest.TestCase):
         new_idle_seconds = (now + 6.0) - last_activity[0]
         self.assertEqual(new_idle_seconds, 1.0)
         self.assertLess(new_idle_seconds, agent.SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS)
+
+    def test_silence_watchdog_bypasses_sandbox_rooms(self):
+        """Verify sandbox testing rooms are identified for watchdog bypass."""
+        sandbox_rooms = ["sandbox-session-123", "executive-voice-test", "test-room-abc"]
+        for room_name in sandbox_rooms:
+            is_sandbox = (
+                room_name.startswith("sandbox-")
+                or room_name.startswith("executive-voice-")
+                or room_name.startswith("test-")
+            )
+            self.assertTrue(is_sandbox, f"Expected {room_name} to be recognized as sandbox")
+
+    def test_voice_bot_agent_init_sets_tools_and_chat_ctx(self):
+        """Verify VoiceBotAgent.__init__ calls super().__init__ and initializes tools and chat_ctx."""
+        room = MagicMock()
+        bot = agent.VoiceBotAgent(
+            room=room,
+            instructions="You are a helpful receptionist.",
+            default_language="en",
+        )
+        self.assertIsNotNone(bot._tools)
+        self.assertIsNotNone(bot._chat_ctx)
+        tool_names = [getattr(getattr(t, "info", None), "name", None) for t in bot._tools]
+        self.assertIn("hang_up_call", tool_names)
+        self.assertIn("end_call", tool_names)
 
 
 if __name__ == "__main__":

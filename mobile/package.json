@@ -9,7 +9,7 @@
     "start:android": "expo start --android",
     "start:web": "expo start --web",
     "build:web": "expo export --platform web",
-    "check:public-env": "node scripts/validate-public-env.mjs",
+    "check:public-env": "node --env-file-if-exists=.env scripts/validate-public-env.mjs",
     "eas-build-pre-install": "npm run check:public-env",
     "lint": "tsc --noEmit",
     "format": "oxfmt",

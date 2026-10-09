@@ -129,7 +129,7 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("voice_bot.agent")
-SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS: float = 15.0
+SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS: float = 60.0
 _PREWARMED_SSL_CONTEXT: Optional[ssl.SSLContext] = None
 
 
@@ -502,6 +502,7 @@ class VoiceBotAgent(Agent):
         self._allowed_languages = frozenset(allowed)
         self._clarification_count = 0
         self._scripted_tts = scripted_tts
+        super().__init__(instructions=self._instructions_for_language(default_language))
         permitted_tools = set(CALENDAR_TOOL_NAMES) if allowed_tools is None else set(allowed_tools)
         permitted_tools.update({"hang_up_call", "end_call"})
         self._tools = [
@@ -1362,6 +1363,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 # Broadcasting it here as well produced duplicate UI turns with
                 # different IDs, which client-side ID deduplication cannot merge.
                 if event.item.role == "assistant":
+                    last_user_activity[0] = time.monotonic()
                     asyncio.create_task(
                         broadcast_transcript(
                             ctx.room,
@@ -1437,6 +1439,16 @@ async def entrypoint(ctx: JobContext) -> None:
         )
 
         async def _silence_watchdog() -> None:
+            # Bypassed for web/mobile sandbox testing sessions so interactive testers aren't dropped abruptly
+            is_sandbox_session = (
+                ctx.room.name.startswith("sandbox-")
+                or ctx.room.name.startswith("executive-voice-")
+                or ctx.room.name.startswith("test-")
+            )
+            if is_sandbox_session:
+                logger.info("Silence watchdog bypassed for sandbox testing session: room=%s", ctx.room.name)
+                return
+
             silence_timeout = float(os.environ.get("SILENCE_WATCHDOG_TIMEOUT_SECONDS", str(SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS)))
             while not silence_watchdog_stop.is_set():
                 await asyncio.sleep(1.0)
@@ -1461,6 +1473,7 @@ async def entrypoint(ctx: JobContext) -> None:
             async def _speak_greeting_task() -> None:
                 try:
                     await speak_configured_greeting(session, inbound_greeting)
+                    last_user_activity[0] = time.monotonic()
                     logger.info("Configured assistant greeting completed: room=%s", ctx.room.name)
                 except Exception as exc:
                     logger.warning(
