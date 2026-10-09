@@ -25,8 +25,21 @@ from db.tokens import get_oauth_connection_metadata
 logger = logging.getLogger("voice_bot.api.auth")
 router = APIRouter(prefix="/auth/google", tags=["auth"])
 
+def _resolve_redirect_uri(requested_uri: str | None) -> str:
+    if not requested_uri:
+        return settings.google_redirect_uri
+    approved_origins = [o.strip().rstrip("/") for o in settings.cors_origins.split(",") if o.strip()]
+    for origin in approved_origins:
+        if requested_uri.startswith(origin) and requested_uri.rstrip("/").endswith("/auth/google/callback"):
+            return requested_uri
+    return settings.google_redirect_uri
+
+
 @router.get("/login", summary="Initiate Google OAuth Consent Flow")
-async def google_login(verified_context_header: str | None = Header(default=None, alias="X-Verified-Session-Context")):
+async def google_login(
+    redirect_uri: str | None = Query(default=None),
+    verified_context_header: str | None = Header(default=None, alias="X-Verified-Session-Context"),
+):
     """
     Redirect the user to Google's OAuth 2.0 consent screen with offline access.
     """
@@ -40,13 +53,21 @@ async def google_login(verified_context_header: str | None = Header(default=None
     if context is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authenticated context required")
     await ensure_company(context.company_id, context.auth_subject)
-    auth_url = await get_authorization_url(company_id=context.company_id, session_id=context.session_id)
+    chosen_redirect = _resolve_redirect_uri(redirect_uri)
+    auth_url = await get_authorization_url(
+        company_id=context.company_id,
+        session_id=context.session_id,
+        redirect_uri=chosen_redirect,
+    )
     logger.info("Initiating Google OAuth login redirect for company context")
     return RedirectResponse(url=auth_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
 @router.get("/url", summary="Get Google Authorization URL as JSON")
-async def google_auth_url(verified_context_header: str | None = Header(default=None, alias="X-Verified-Session-Context")):
+async def google_auth_url(
+    redirect_uri: str | None = Query(default=None),
+    verified_context_header: str | None = Header(default=None, alias="X-Verified-Session-Context"),
+):
     """
     Return the Google OAuth authorization URL as JSON for frontend popups or links.
     """
@@ -60,8 +81,14 @@ async def google_auth_url(verified_context_header: str | None = Header(default=N
     if context is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authenticated context required")
     await ensure_company(context.company_id, context.auth_subject)
-    auth_url = await get_authorization_url(company_id=context.company_id, session_id=context.session_id)
+    chosen_redirect = _resolve_redirect_uri(redirect_uri)
+    auth_url = await get_authorization_url(
+        company_id=context.company_id,
+        session_id=context.session_id,
+        redirect_uri=chosen_redirect,
+    )
     return {"auth_url": auth_url}
+
 
 
 @router.get("/callback", summary="Handle Google OAuth Callback", response_class=HTMLResponse)

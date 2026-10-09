@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # External APIs
     google_client_id: str = Field(default="", validation_alias="GOOGLE_CLIENT_ID")
     google_redirect_uri: str = Field(
-        default="http://localhost:8000/auth/google/callback",
+        default="https://ai-voice-assistants.vercel.app/auth/google/callback",
         validation_alias="GOOGLE_REDIRECT_URI",
     )
     google_oauth_state_secret: str = Field(default="", validation_alias="GOOGLE_OAUTH_STATE_SECRET")

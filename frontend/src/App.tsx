@@ -1213,20 +1213,21 @@ function GoogleCalendarIntegrationCard({ initialStatus }: { initialStatus?: { co
       "GoogleOAuth",
       `width=${width},height=${height},left=${left},top=${top},status=no,menubar=no,toolbar=no`
     );
+    const callbackUrl = `${window.location.origin}/auth/google/callback`;
     try {
-      const res = await fetch("/auth/google/url", { cache: "no-store", credentials: "include" });
+      const res = await fetch(`/auth/google/url?redirect_uri=${encodeURIComponent(callbackUrl)}`, { cache: "no-store", credentials: "include" });
       if (res.ok) {
         const data = await res.json();
         if (data.auth_url && popup) {
           popup.location.href = data.auth_url;
         } else if (popup) {
-          popup.location.href = "/auth/google/login";
+          popup.location.href = `/auth/google/login?redirect_uri=${encodeURIComponent(callbackUrl)}`;
         }
       } else if (popup) {
-        popup.location.href = "/auth/google/login";
+        popup.location.href = `/auth/google/login?redirect_uri=${encodeURIComponent(callbackUrl)}`;
       }
     } catch {
-      if (popup) popup.location.href = "/auth/google/login";
+      if (popup) popup.location.href = `/auth/google/login?redirect_uri=${encodeURIComponent(callbackUrl)}`;
     }
     const timer = setInterval(() => {
       if (!popup || popup.closed) {

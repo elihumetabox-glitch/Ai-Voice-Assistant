@@ -19,11 +19,20 @@ async def test_google_oauth_initiation_ensures_authenticated_company(
     async def ensure_company(received_company_id, received_auth_subject):
         calls.append(("company", received_company_id, received_auth_subject))
 
-    async def get_authorization_url(*, company_id, session_id):
+    async def get_authorization_url(*, company_id, session_id, **kwargs):
         calls.append(("url", company_id, session_id))
         return "https://accounts.google.com/test"
 
-    monkeypatch.setattr(auth, "settings", SimpleNamespace(google_client_id="client", google_client_secret="secret"))
+    monkeypatch.setattr(
+        auth,
+        "settings",
+        SimpleNamespace(
+            google_client_id="client",
+            google_client_secret="secret",
+            google_redirect_uri="https://ai-voice-assistants.vercel.app/auth/google/callback",
+            cors_origins="http://localhost:3000",
+        ),
+    )
     monkeypatch.setattr(
         auth,
         "verify_session_context",
