@@ -6,6 +6,7 @@
  * isolated PBX runtimes per company, and tearing down removed accounts.
  */
 
+import { CallControlClient } from "@3cx/call-control-sdk";
 import { MultiTenantSupervisor } from "./multi-tenant-supervisor.mjs";
 import { createBrokerBoundTenantRuntime } from "./broker-bound-tenant-runtime.mjs";
 
@@ -32,6 +33,7 @@ async function fetchActiveTenants() {
 }
 
 async function acquireTenantLease(tenantRef) {
+  const companyId = typeof tenantRef === "string" ? tenantRef : tenantRef.companyId;
   const url = `${BROKER_URL.replace(/\/+$/, "")}/internal/v1/threecx/tenant-lease`;
   const headers = {
     "Content-Type": "application/json",
@@ -45,13 +47,26 @@ async function acquireTenantLease(tenantRef) {
   const res = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify({ companyId: tenantRef.companyId }),
+    body: JSON.stringify({ companyId }),
   });
 
   if (!res.ok) {
-    throw new Error(`Failed to acquire lease for ${tenantRef.companyId}: HTTP ${res.status}`);
+    throw new Error(`Failed to acquire lease for ${companyId}: HTTP ${res.status}`);
   }
-  return await res.json();
+  const leaseData = await res.json();
+  const client = new CallControlClient({
+    pbxBase: leaseData.pbxBase,
+    appId: leaseData.appId,
+    appSecret: leaseData.appSecret,
+  });
+
+  return {
+    leaseId: leaseData.leaseId,
+    tenantRef: companyId,
+    expiresAt: leaseData.expiresAt,
+    client,
+    tenantBinding: leaseData.tenantBinding,
+  };
 }
 
 async function releaseTenantLease(lease) {
@@ -68,10 +83,7 @@ async function releaseTenantLease(lease) {
 
 function createTenantRuntime(tenantConfig) {
   return createBrokerBoundTenantRuntime({
-    tenantRef: {
-      companyId: tenantConfig.companyId,
-      profileVersion: tenantConfig.profileVersion || 1,
-    },
+    tenantRef: tenantConfig.companyId,
     acquireTenantLease,
     releaseTenantLease,
     runtimeOptions: {

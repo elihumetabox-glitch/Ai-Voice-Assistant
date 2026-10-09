@@ -33,7 +33,7 @@ from backend.app.services.google_oauth import (
     fetch_google_identity,
     revoke_and_disconnect,
 )
-from backend.app.services.credential_envelope import encrypt_secret
+from backend.app.services.credential_envelope import decrypt_secret, encrypt_secret
 from backend.app.services.latency import bind_trace_id, log_latency, measured, reset_trace_id
 from backend.app.services.threecx_probe import probe_pbx
 from backend.app.config import settings
@@ -438,4 +438,64 @@ async def threecx_active_tenants(_authorized: bool = Depends(require_broker_secr
             for row in integrations
         ]
     }
+
+
+class TenantLeaseRequest(BaseModel):
+    companyId: str
+
+
+@app.post("/internal/v1/threecx/tenant-lease")
+async def threecx_acquire_tenant_lease(request: TenantLeaseRequest, _authorized: bool = Depends(require_broker_secret)):
+    pool = await get_db_pool()
+    company_uuid = uuid.UUID(request.companyId)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """SELECT company_id, connection_name, pbx_hostname, app_id, route_point_dn,
+                      client_secret_ciphertext, encryption_envelope, dids, transfer_destinations,
+                      failure_action, failure_destination, state
+               FROM threecx_integrations
+               WHERE company_id = $1 AND state = 'active'""",
+            company_uuid,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Active 3CX integration not found for company")
+
+    envelope = json.loads(row["encryption_envelope"]) if isinstance(row["encryption_envelope"], str) else row["encryption_envelope"]
+    client_secret = await asyncio.to_thread(
+        decrypt_secret,
+        row["client_secret_ciphertext"],
+        envelope,
+        company_id=str(row["company_id"]),
+        provider="threecx",
+        field="client_secret",
+    )
+
+    expires_at_ms = int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp() * 1000)
+    lease_id = f"lease-{uuid.uuid4().hex}"
+
+    return {
+        "leaseId": lease_id,
+        "companyId": str(row["company_id"]),
+        "expiresAt": expires_at_ms,
+        "pbxBase": f"https://{row['pbx_hostname'].rstrip('/')}",
+        "appId": row["app_id"],
+        "appSecret": client_secret,
+        "routePointDn": row["route_point_dn"],
+        "dids": json.loads(row["dids"]) if isinstance(row["dids"], str) else (row["dids"] or []),
+        "transferDestinations": json.loads(row["transfer_destinations"]) if isinstance(row["transfer_destinations"], str) else (row["transfer_destinations"] or []),
+        "failureAction": row["failure_action"],
+        "failureDestination": row["failure_destination"],
+        "tenantBinding": {
+            "companyId": str(row["company_id"]),
+            "authSubject": "3cx-connector-service",
+            "routePointDn": row["route_point_dn"],
+            "profileVersion": 1,
+            "timezone": "Indian/Mauritius",
+        },
+    }
+
+
+@app.delete("/internal/v1/threecx/tenant-lease/{lease_id}")
+async def threecx_release_tenant_lease(lease_id: str, _authorized: bool = Depends(require_broker_secret)):
+    return {"released": True, "leaseId": lease_id}
 
