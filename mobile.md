@@ -158,45 +158,38 @@ installation. The check rejects missing origins, localhost/loopback hosts,
 non-HTTPS release URLs, URL paths/query strings, and secret-looking
 `EXPO_PUBLIC_*` variables.
 
-Required public build variables (confirmed in Expo Preview and Production):
+Required public build variables (embedded in `mobile/eas.json` for Preview and Production):
 
-- `EXPO_PUBLIC_APP_URL=https://ai-voice-bot-production-6573.up.railway.app` — canonical HTTPS Next.js origin.
-- `EXPO_PUBLIC_BACKEND_URL=https://voice-api-production-0c80.up.railway.app` — public HTTPS Railway FastAPI origin used by the
-  non-voice mobile API screens.
-- `EXPO_PUBLIC_LIVEKIT_TOKEN_ENDPOINT` — optional complete override; normally
+- `EXPO_PUBLIC_APP_URL=https://ai-voice-assistants.vercel.app` — canonical HTTPS Next.js origin on Vercel.
+- `EXPO_PUBLIC_BACKEND_URL=https://ai-assistant-backend-production-977c.up.railway.app` — public HTTPS Railway FastAPI origin.
+- `EXPO_PUBLIC_LIVEKIT_TOKEN_ENDPOINT` — optional complete override; defaults to
   `${EXPO_PUBLIC_APP_URL}/api/livekit/token`.
-- `EXPO_PUBLIC_LIVEKIT_URL=wss://ai-voice-assistant-vu6rr406.livekit.cloud` — retained
-  only as the legacy fallback; the authenticated token response remains authoritative.
+- `EXPO_PUBLIC_LIVEKIT_URL=wss://ai-voice-assistant-vu6rr406.livekit.cloud` — LiveKit Cloud WebSocket URL.
 
 The APK must never receive `BACKEND_URL` private hostnames,
 `CREDENTIAL_BROKER_URL`, database/Neon URLs, LiveKit API credentials, Gemini
 credentials, or `LIVEKIT_SESSION_CONTEXT_SECRET`. The LiveKit WebSocket URL is
 returned by the authenticated token response; the legacy
-`EXPO_PUBLIC_LIVEKIT_URL` fallback is retained only for compatibility and must
-be verified or removed before production distribution.
+`EXPO_PUBLIC_LIVEKIT_URL` fallback is retained only for compatibility.
 
-Release gates still pending:
+### Building in EAS connected to GitHub:
 
-1. Confirm the recorded deployed HTTPS origins remain reachable and verify DNS/TLS,
-   `/health`, and `/health/db`.
-2. Confirm Next.js `BACKEND_URL`, `APP_ORIGIN`, Neon Auth, Google OAuth callback,
-   and shared session-context secret configuration.
-3. Confirm the API, private broker, LiveKit worker, and booking worker are on
-   the same approved commit; verify `calendar-assistant` registration and
-   dispatch.
-4. Test cookie-based authentication and `/api/livekit/token` on a physical
-   Android device. A valid response must contain `token`, `ws_url`, `room`,
-   `identity`, and `session_id`; unauthenticated requests must be rejected.
-5. Configure EAS project identity and Android signing, then run the automated
-   gates and release-device voice smoke tests below.
-
-Use the following release build after the URLs are confirmed:
-
-```powershell
-$env:EXPO_PUBLIC_APP_URL = 'https://<confirmed-app-origin>'
-$env:EXPO_PUBLIC_BACKEND_URL = 'https://<confirmed-api-origin>'
-npx eas build --platform android --profile production
-```
+When building through EAS Build connected to this GitHub repository:
+1. **Base Directory**: In your Expo dashboard (`expo.dev`) under **Project > GitHub settings**, ensure the **Base directory** is set to `mobile`.
+2. **Environment Variables**: Public variables are defined directly inside `mobile/eas.json` under `build.production.env`, `build.preview.env`, and `build.development.env`.
+3. **Build Commands**:
+   - For internal testing APK:
+     ```bash
+     npx eas build --platform android --profile production
+     ```
+   - For Google Play Store App Bundle (AAB):
+     ```bash
+     npx eas build --platform android --profile production-aab
+     ```
+   - For iOS build:
+     ```bash
+     npx eas build --platform ios --profile production
+     ```
 
 ## Staged execution tracker
 

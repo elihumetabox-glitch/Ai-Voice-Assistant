@@ -15,6 +15,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.vocalist.ai.mobile",
+      "buildNumber": "1",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "AI Voice Bot requires microphone access for real-time conversational voice interaction.",
         "UIBackgroundModes": [
@@ -23,6 +24,7 @@
       }
     },
     "android": {
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./src/assets/adaptive-foreground.png",
         "backgroundColor": "#5B6BF0"

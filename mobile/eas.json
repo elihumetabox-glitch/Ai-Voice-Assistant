@@ -8,6 +8,11 @@
       "developmentClient": true,
       "distribution": "internal",
       "environment": "development",
+      "env": {
+        "EXPO_PUBLIC_APP_URL": "https://ai-voice-assistants.vercel.app",
+        "EXPO_PUBLIC_BACKEND_URL": "https://ai-assistant-backend-production-977c.up.railway.app",
+        "EXPO_PUBLIC_LIVEKIT_URL": "wss://ai-voice-assistant-vu6rr406.livekit.cloud"
+      },
       "android": {
         "buildType": "apk"
       }
@@ -15,6 +20,11 @@
     "preview": {
       "distribution": "internal",
       "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_APP_URL": "https://ai-voice-assistants.vercel.app",
+        "EXPO_PUBLIC_BACKEND_URL": "https://ai-assistant-backend-production-977c.up.railway.app",
+        "EXPO_PUBLIC_LIVEKIT_URL": "wss://ai-voice-assistant-vu6rr406.livekit.cloud"
+      },
       "android": {
         "buildType": "apk"
       }
@@ -22,8 +32,25 @@
     "production": {
       "distribution": "internal",
       "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_APP_URL": "https://ai-voice-assistants.vercel.app",
+        "EXPO_PUBLIC_BACKEND_URL": "https://ai-assistant-backend-production-977c.up.railway.app",
+        "EXPO_PUBLIC_LIVEKIT_URL": "wss://ai-voice-assistant-vu6rr406.livekit.cloud"
+      },
       "android": {
         "buildType": "apk"
+      }
+    },
+    "production-aab": {
+      "distribution": "store",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_APP_URL": "https://ai-voice-assistants.vercel.app",
+        "EXPO_PUBLIC_BACKEND_URL": "https://ai-assistant-backend-production-977c.up.railway.app",
+        "EXPO_PUBLIC_LIVEKIT_URL": "wss://ai-voice-assistant-vu6rr406.livekit.cloud"
+      },
+      "android": {
+        "buildType": "app-bundle"
       }
     }
   }
