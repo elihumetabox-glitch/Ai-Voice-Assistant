@@ -129,7 +129,7 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("voice_bot.agent")
-SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS: float = 60.0
+SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS: float = 15.0
 _PREWARMED_SSL_CONTEXT: Optional[ssl.SSLContext] = None
 
 

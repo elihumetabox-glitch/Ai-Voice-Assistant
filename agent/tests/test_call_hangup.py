@@ -131,12 +131,12 @@ class TestCallHangup(unittest.TestCase):
 
         asyncio.run(_run())
 
-    def test_silence_watchdog_default_timeout_is_60s(self):
-        """Verify the silence watchdog default timeout is set to 60.0 seconds."""
-        self.assertEqual(agent.SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS, 60.0)
+    def test_silence_watchdog_default_timeout_is_15s(self):
+        """Verify the silence watchdog default timeout is set to 15.0 seconds."""
+        self.assertEqual(agent.SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS, 15.0)
 
     def test_silence_watchdog_triggers_hangup_on_inactivity(self):
-        """Verify silence watchdog triggers hangup packet and disconnect after silence timeout."""
+        """Verify silence watchdog triggers hangup packet and disconnect after 15s of silence."""
         async def _run():
             room = MagicMock()
             room.name = "call-room-test"
@@ -145,11 +145,11 @@ class TestCallHangup(unittest.TestCase):
             room.disconnect = AsyncMock()
 
             silence_stop = asyncio.Event()
-            last_activity = [0.0]  # Far in the past (idle > 60s)
+            last_activity = [0.0]  # Far in the past (idle > 15s)
 
-            # Simulated watchdog iteration using 60.0s limit
+            # Simulated watchdog iteration using 15.0s limit
             silence_timeout = agent.SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS
-            idle_seconds = 61.0  # simulates > 60s idle
+            idle_seconds = 16.0  # simulates > 15s idle
             self.assertGreaterEqual(idle_seconds, silence_timeout)
 
             # Execution logic matching _silence_watchdog in agent.py
@@ -166,7 +166,7 @@ class TestCallHangup(unittest.TestCase):
         asyncio.run(_run())
 
     def test_silence_watchdog_resets_on_user_activity(self):
-        """Verify new activity keeps idle time below 60.0s threshold."""
+        """Verify new activity keeps idle time below 15.0s threshold."""
         import time
         now = time.monotonic()
         last_activity = [now]
