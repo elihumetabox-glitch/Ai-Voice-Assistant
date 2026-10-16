@@ -1338,7 +1338,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     start_sensitivity_str = os.getenv(
         "GEMINI_START_SENSITIVITY",
-        "low" if is_sip_call else "high",
+        "high",
     ).strip().lower()
     start_sensitivity = (
         genai_types.StartSensitivity.START_SENSITIVITY_LOW
@@ -1353,7 +1353,7 @@ async def entrypoint(ctx: JobContext) -> None:
         else genai_types.ActivityHandling.NO_INTERRUPTION
     )
 
-    silence_duration_ms = int(os.getenv("GEMINI_SILENCE_DURATION_MS", "750" if is_sip_call else "500"))
+    silence_duration_ms = int(os.getenv("GEMINI_SILENCE_DURATION_MS", "500"))
 
     realtime_input_config = genai_types.RealtimeInputConfig(
         automatic_activity_detection=genai_types.AutomaticActivityDetection(
@@ -1419,9 +1419,9 @@ async def entrypoint(ctx: JobContext) -> None:
         scripted_tts=scripted_tts,
     )
 
-    vad_min_speech_duration = float(os.getenv("VAD_MIN_SPEECH_DURATION", "0.25" if is_sip_call else "0.1"))
-    vad_min_silence_duration = float(os.getenv("VAD_MIN_SILENCE_DURATION", "0.5" if is_sip_call else "0.25"))
-    vad_activation_threshold = float(os.getenv("VAD_ACTIVATION_THRESHOLD", "0.65" if is_sip_call else "0.5"))
+    vad_min_speech_duration = float(os.getenv("VAD_MIN_SPEECH_DURATION", "0.1"))
+    vad_min_silence_duration = float(os.getenv("VAD_MIN_SILENCE_DURATION", "0.3"))
+    vad_activation_threshold = float(os.getenv("VAD_ACTIVATION_THRESHOLD", "0.45" if is_sip_call else "0.5"))
     custom_vad = inference.VAD(
         model="silero",
         min_speech_duration=vad_min_speech_duration,
@@ -1429,10 +1429,10 @@ async def entrypoint(ctx: JobContext) -> None:
         activation_threshold=vad_activation_threshold,
     )
 
-    min_interruption_duration = float(os.getenv("VOICE_MIN_INTERRUPTION_DURATION", "0.85" if is_sip_call else "0.35"))
-    min_endpointing_delay = float(os.getenv("VOICE_MIN_ENDPOINTING_DELAY", "0.6" if is_sip_call else "0.4"))
-    max_endpointing_delay = float(os.getenv("VOICE_MAX_ENDPOINTING_DELAY", "1.5" if is_sip_call else "1.2"))
-    aec_warmup_duration = float(os.getenv("VOICE_AEC_WARMUP_DURATION", "1.5" if is_sip_call else "0.5"))
+    min_interruption_duration = float(os.getenv("VOICE_MIN_INTERRUPTION_DURATION", "0.4" if is_sip_call else "0.35"))
+    min_endpointing_delay = float(os.getenv("VOICE_MIN_ENDPOINTING_DELAY", "0.4"))
+    max_endpointing_delay = float(os.getenv("VOICE_MAX_ENDPOINTING_DELAY", "1.2"))
+    aec_warmup_duration = float(os.getenv("VOICE_AEC_WARMUP_DURATION", "0.5"))
 
     session_kwargs: Dict[str, Any] = {
         "llm": model,
@@ -1447,9 +1447,9 @@ async def entrypoint(ctx: JobContext) -> None:
             "interruption": {
                 "enabled": interruption_enabled,
                 "min_duration": min_interruption_duration,
-                "min_words": 3,
+                "min_words": 1,
                 "resume_false_interruption": True,
-                "false_interruption_timeout": 2.0,
+                "false_interruption_timeout": 1.5,
             },
         },
     }
