@@ -349,6 +349,17 @@ async def end_3cx_sip_session(
         room_name=payload.room_name,
         final_state=payload.state,
     )
+    api_key = os.getenv("LIVEKIT_API_KEY", "").strip()
+    api_secret = os.getenv("LIVEKIT_API_SECRET", "").strip()
+    ws_url = os.getenv("LIVEKIT_URL", "").strip()
+    if api_key and api_secret and ws_url and payload.room_name:
+        try:
+            from livekit.api import DeleteRoomRequest, LiveKitAPI
+            lk_api = LiveKitAPI(ws_url, api_key, api_secret)
+            await lk_api.room.delete_room(DeleteRoomRequest(room=payload.room_name))
+            await lk_api.aclose()
+        except Exception:
+            pass
     return {"status": "success", "updated": updated}
 
 

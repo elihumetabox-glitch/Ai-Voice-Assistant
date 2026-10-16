@@ -350,6 +350,20 @@ async def resolve_sip_session_context(
         return None
 
 
+async def terminate_livekit_room(room_name: str) -> None:
+    """Explicitly delete the LiveKit room so LiveKit SIP terminates the SIP trunk leg and sends SIP BYE to 3CX."""
+    if not LIVEKIT_URL or not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET or not room_name:
+        return
+    try:
+        from livekit.api import DeleteRoomRequest, LiveKitAPI
+        lk_api = LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+        await lk_api.room.delete_room(DeleteRoomRequest(room=room_name))
+        await lk_api.aclose()
+        logger.info("LiveKit room deleted to terminate SIP call: room=%s", room_name)
+    except Exception as exc:
+        logger.warning("Failed to delete LiveKit room %s for SIP hangup (error_type=%s)", room_name, type(exc).__name__)
+
+
 async def notify_sip_session_ended(
     room_name: str,
     session_context: VerifiedSessionContext,
@@ -358,7 +372,7 @@ async def notify_sip_session_ended(
     backend_url: str = BACKEND_URL,
     ssl_context: Optional[ssl.SSLContext] = None,
 ) -> None:
-    """Best-effort notification to mark an inbound SIP call session ended in the backend."""
+    """Best-effort notification to mark an inbound SIP call session ended in the backend and terminate 3CX SIP leg."""
     room_prefix = os.getenv("SIP_PILOT_ROOM_PREFIX", "call-").strip() or "call-"
     if not room_name or not room_name.startswith(room_prefix):
         return
@@ -375,6 +389,8 @@ async def notify_sip_session_ended(
             )
     except Exception:
         pass
+    finally:
+        await terminate_livekit_room(room_name)
 
 
 def serialize_untrusted_company_data(value: Any) -> str:
@@ -1037,6 +1053,7 @@ class VoiceBotAgent(Agent):
         async def _graceful_room_disconnect() -> None:
             try:
                 await asyncio.sleep(2.0)
+                await terminate_livekit_room(getattr(self.room, "name", ""))
                 if hasattr(self.room, "disconnect"):
                     await self.room.disconnect()
             except Exception as exc:
@@ -1615,6 +1632,7 @@ async def entrypoint(ctx: JobContext) -> None:
                         if ctx.room.local_participant:
                             await ctx.room.local_participant.publish_data(packet, reliable=True)
                         await asyncio.sleep(1.5)
+                        await terminate_livekit_room(ctx.room.name)
                         await ctx.room.disconnect()
                     except Exception:
                         pass
