@@ -35,7 +35,7 @@ import httpx
 import numpy.fft
 from google.genai import types as genai_types
 from livekit import agents, rtc
-from livekit.agents import JobContext, JobProcess, StopResponse, WorkerOptions, cli, llm
+from livekit.agents import JobContext, JobProcess, StopResponse, WorkerOptions, cli, inference, llm
 from livekit.agents.llm import ChatMessage
 from livekit.agents.utils import http_context as livekit_http_context
 from livekit.agents.voice import (
@@ -1331,15 +1331,39 @@ async def entrypoint(ctx: JobContext) -> None:
     if runtime_behavior_instruction:
         active_instructions += f"\n\n{runtime_behavior_instruction}"
 
+    is_sip_call = bool(
+        ctx.room.name.startswith("call-")
+        or getattr(session_context, "source", "") == "sip-trunk-service"
+    )
+
+    start_sensitivity_str = os.getenv(
+        "GEMINI_START_SENSITIVITY",
+        "low" if is_sip_call else "high",
+    ).strip().lower()
+    start_sensitivity = (
+        genai_types.StartSensitivity.START_SENSITIVITY_LOW
+        if start_sensitivity_str == "low"
+        else genai_types.StartSensitivity.START_SENSITIVITY_HIGH
+    )
+
+    interruption_enabled = os.getenv("VOICE_INTERRUPTION_ENABLED", "true").strip().lower() in ("true", "1")
+    activity_handling = (
+        genai_types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS
+        if interruption_enabled
+        else genai_types.ActivityHandling.NO_INTERRUPTION
+    )
+
+    silence_duration_ms = int(os.getenv("GEMINI_SILENCE_DURATION_MS", "750" if is_sip_call else "500"))
+
     realtime_input_config = genai_types.RealtimeInputConfig(
         automatic_activity_detection=genai_types.AutomaticActivityDetection(
             disabled=False,
-            silence_duration_ms=450,
+            silence_duration_ms=silence_duration_ms,
             prefix_padding_ms=100,
-            start_of_speech_sensitivity=genai_types.StartSensitivity.START_SENSITIVITY_HIGH,
+            start_of_speech_sensitivity=start_sensitivity,
             end_of_speech_sensitivity=genai_types.EndSensitivity.END_SENSITIVITY_HIGH,
         ),
-        activity_handling=genai_types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+        activity_handling=activity_handling,
         turn_coverage=genai_types.TurnCoverage.TURN_INCLUDES_ALL_INPUT,
     )
 
@@ -1394,20 +1418,38 @@ async def entrypoint(ctx: JobContext) -> None:
         allowed_languages=active_allowed_languages,
         scripted_tts=scripted_tts,
     )
+
+    vad_min_speech_duration = float(os.getenv("VAD_MIN_SPEECH_DURATION", "0.25" if is_sip_call else "0.1"))
+    vad_min_silence_duration = float(os.getenv("VAD_MIN_SILENCE_DURATION", "0.5" if is_sip_call else "0.25"))
+    vad_activation_threshold = float(os.getenv("VAD_ACTIVATION_THRESHOLD", "0.65" if is_sip_call else "0.5"))
+    custom_vad = inference.VAD(
+        model="silero",
+        min_speech_duration=vad_min_speech_duration,
+        min_silence_duration=vad_min_silence_duration,
+        activation_threshold=vad_activation_threshold,
+    )
+
+    min_interruption_duration = float(os.getenv("VOICE_MIN_INTERRUPTION_DURATION", "0.85" if is_sip_call else "0.35"))
+    min_endpointing_delay = float(os.getenv("VOICE_MIN_ENDPOINTING_DELAY", "0.6" if is_sip_call else "0.4"))
+    max_endpointing_delay = float(os.getenv("VOICE_MAX_ENDPOINTING_DELAY", "1.5" if is_sip_call else "1.2"))
+    aec_warmup_duration = float(os.getenv("VOICE_AEC_WARMUP_DURATION", "1.5" if is_sip_call else "0.5"))
+
     session_kwargs: Dict[str, Any] = {
         "llm": model,
+        "vad": custom_vad,
+        "aec_warmup_duration": aec_warmup_duration,
         "turn_handling": {
             "endpointing": {
                 "mode": "dynamic",
-                "min_delay": 0.4,
-                "max_delay": 1.2,
+                "min_delay": min_endpointing_delay,
+                "max_delay": max_endpointing_delay,
             },
             "interruption": {
-                "enabled": True,
-                "min_duration": 0.35,
-                "min_words": 2,
+                "enabled": interruption_enabled,
+                "min_duration": min_interruption_duration,
+                "min_words": 3,
                 "resume_false_interruption": True,
-                "false_interruption_timeout": 1.5,
+                "false_interruption_timeout": 2.0,
             },
         },
     }
