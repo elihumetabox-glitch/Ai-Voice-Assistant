@@ -50,8 +50,8 @@ Any credentials, database endpoints, authentication endpoints, or services belon
 - **Session Context**: Signed with internal dispatch secret tied to this tenant environment.
 
 ### D. Google Multimodal Live & OAuth Integration
-- **Google Cloud Project**: `0944069925` / `921027457755`
-- **OAuth Client ID**: `921027457755-kf4epo0unnhnhno0ug71jepv5bo52um0.apps.googleusercontent.com`
+- **Google Cloud Project**: `gen-lang-client-0944069925` (Project Number: `921027457755`)
+- **OAuth Client ID**: `733780147643-qaoumom6sa4jmv3s8mr8p30uf2c2kbuk.apps.googleusercontent.com`
 - **Authorized JavaScript Origins**:
   - `http://localhost:3000`
   - `http://127.0.0.1:3000`

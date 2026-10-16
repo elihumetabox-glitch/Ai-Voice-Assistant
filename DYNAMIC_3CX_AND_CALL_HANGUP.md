@@ -21,7 +21,7 @@ This document details the architectural enhancements, file changes, and operatio
 - **Dynamic Multi-Tenant Supervision:** Added a multi-tenant connector supervisor that periodically queries active PBX configurations across all companies, spins up isolated PBX runtimes, updates them on credential or DID changes, and drains removed tenants gracefully.
 - **Conversational Hangup Tool (`hang_up_call` / `end_call`):** Equipped the LLM with a dedicated function tool to end calls politely after bidding farewell.
 - **Audio-Safe Sequencing:** The agent speaks the farewell message, flushes audio buffers, sends an explicit `call_hangup` data packet over the LiveKit DataChannel, and cleanly disconnects.
-- **Silence Watchdog:** If a caller remains silent for 15 seconds without speaking (configurable via `SILENCE_WATCHDOG_TIMEOUT_SECONDS`), the assistant automatically gives a parting message and disconnects the call.
+- **Silence Watchdog:** If a caller remains silent for 60 seconds without speaking (configurable via `SILENCE_WATCHDOG_TIMEOUT_SECONDS`), the assistant disconnects the call. Speech and assistant playback automatically keep the timer alive.
 - **Clean PBX Teardown:** The call controller differentiates between planned hangups (`handleCallHangup`) and network/media failures (`handleMediaFailure`), ensuring the PBX drops the call participant cleanly without triggering error fallbacks.
 
 ---
@@ -85,7 +85,7 @@ sequenceDiagram
   - Added `@llm.function_tool` `hang_up_call` and alias `end_call` to `VoiceBotAgent`.
   - Added `permitted_tools = set(self._policy.calendar_tool_names) | {"hang_up_call", "end_call"}` to allow hangup tools while preserving calendar policy security.
   - Implemented graceful audio sequencing: speaks the farewell response, flushes the audio playback buffer with `asyncio.sleep(1.2)`, publishes `{"type": "call_hangup", "reason": reason}` over the LiveKit data channel, and closes the room session.
-  - Added silence watchdog tracking: initializes `last_user_activity = [time.monotonic()]`, updates it on `on_user_input`, and runs `_silence_watchdog` terminating the call after 15 seconds (`SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS = 15.0`) of continuous idle silence.
+  - Added silence watchdog tracking: initializes `last_user_activity = [time.monotonic()]`, updates it on `on_user_input` and speech events, and runs `_silence_watchdog` terminating the call after 60 seconds (`SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS = 60.0`) of continuous idle silence. Assistant speech playback pauses the silence count.
 * **Why it was needed:**
   - Allows the LLM to understand when an interaction is over and cleanly drop the telephone line instead of holding the customer on an open channel.
 

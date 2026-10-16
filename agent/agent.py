@@ -129,7 +129,7 @@ except ImportError:
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("voice_bot.agent")
-SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS: float = 15.0
+SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS: float = 60.0
 _PREWARMED_SSL_CONTEXT: Optional[ssl.SSLContext] = None
 
 
@@ -1523,15 +1523,44 @@ async def entrypoint(ctx: JobContext) -> None:
 
     silence_watchdog_stop = asyncio.Event()
     last_user_activity = [time.monotonic()]
+    agent_speaking = [False]
+
+    # Keep silence timer reset during speech activity
+    for speech_event in ("user_started_speaking", "user_stopped_speaking"):
+        try:
+            @session.on(speech_event)
+            def _on_user_speech_state(event: Any = None):
+                last_user_activity[0] = time.monotonic()
+        except Exception:
+            pass
+
+    try:
+        @session.on("agent_started_speaking")
+        def _on_agent_started_speaking(event: Any = None):
+            agent_speaking[0] = True
+            last_user_activity[0] = time.monotonic()
+    except Exception:
+        pass
+
+    try:
+        @session.on("agent_stopped_speaking")
+        def _on_agent_stopped_speaking(event: Any = None):
+            agent_speaking[0] = False
+            last_user_activity[0] = time.monotonic()
+    except Exception:
+        pass
 
     @session.on("user_input_transcribed")
     def on_user_input(event: UserInputTranscribedEvent):
         try:
+            # Any audio transcript received indicates caller is actively communicating
+            if event.transcript:
+                last_user_activity[0] = time.monotonic()
+
             # The custom DataChannel is the UI's canonical transcript source.
             # Publish only the final segment; partials otherwise appear as
             # separate messages before the final event arrives.
             if event.transcript and event.is_final:
-                last_user_activity[0] = time.monotonic()
                 asyncio.create_task(
                     broadcast_transcript(
                         ctx.room,
@@ -1603,11 +1632,16 @@ async def entrypoint(ctx: JobContext) -> None:
                 logger.info("Silence watchdog bypassed for sandbox testing session: room=%s", ctx.room.name)
                 return
 
-            silence_timeout = float(os.environ.get("SILENCE_WATCHDOG_TIMEOUT_SECONDS", str(SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS)))
+            default_timeout = 60.0 if is_sip_call else SILENCE_WATCHDOG_DEFAULT_TIMEOUT_SECONDS
+            silence_timeout = float(os.environ.get("SILENCE_WATCHDOG_TIMEOUT_SECONDS", str(default_timeout)))
+            logger.info("Silence watchdog initialized (timeout=%.1fs, is_sip=%s): room=%s", silence_timeout, is_sip_call, ctx.room.name)
             while not silence_watchdog_stop.is_set():
                 await asyncio.sleep(1.0)
                 if silence_watchdog_stop.is_set():
                     break
+                if agent_speaking[0]:
+                    last_user_activity[0] = time.monotonic()
+                    continue
                 idle_seconds = time.monotonic() - last_user_activity[0]
                 if idle_seconds >= silence_timeout:
                     logger.info("Call silence watchdog timeout triggered (idle=%.1fs, limit=%.1fs): room=%s", idle_seconds, silence_timeout, ctx.room.name)
@@ -1626,6 +1660,7 @@ async def entrypoint(ctx: JobContext) -> None:
         if inbound_greeting:
             async def _speak_greeting_task() -> None:
                 try:
+                    agent_speaking[0] = True
                     await speak_configured_greeting(session, inbound_greeting)
                     last_user_activity[0] = time.monotonic()
                     logger.info("Configured assistant greeting completed: room=%s", ctx.room.name)
@@ -1635,6 +1670,9 @@ async def entrypoint(ctx: JobContext) -> None:
                         ctx.room.name,
                         type(exc).__name__,
                     )
+                finally:
+                    agent_speaking[0] = False
+                    last_user_activity[0] = time.monotonic()
 
             asyncio.create_task(_speak_greeting_task())
     except Exception as exc:
