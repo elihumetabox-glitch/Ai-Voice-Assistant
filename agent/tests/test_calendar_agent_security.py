@@ -175,3 +175,50 @@ async def test_unknown_tool_is_rejected_before_backend_call() -> None:
         )
 
     client.post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_sip_session_context_resolves_dynamic_3cx_tenant(monkeypatch) -> None:
+    monkeypatch.setenv("LIVEKIT_SESSION_CONTEXT_SECRET", "sip-secret")
+    monkeypatch.setenv("SIP_PILOT_ROOM_PREFIX", "call-")
+    monkeypatch.setenv("SIP_PILOT_AGENT_NAME", "calendar-assistant")
+
+    signed_meta = _signed_metadata(
+        secret="sip-secret",
+        session_id="call-4001-xyz",
+        company_id="e2628de2-187e-4adc-ba94-cde155b93319",
+        timezone="Indian/Mauritius",
+    )
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {
+        "signed_metadata": signed_meta,
+        "company_id": "e2628de2-187e-4adc-ba94-cde155b93319",
+    }
+    client = AsyncMock()
+    client.post.return_value = response
+
+    ctx = await agent.resolve_sip_session_context(
+        "",
+        room_name="call-4001-xyz",
+        agent_name="calendar-assistant",
+        client=client,
+    )
+    assert ctx is not None
+    assert ctx.company_id == "e2628de2-187e-4adc-ba94-cde155b93319"
+    assert ctx.session_id == "call-4001-xyz"
+    assert ctx.timezone == "Indian/Mauritius"
+    client.post.assert_awaited_once()
+    call_kwargs = client.post.await_args.kwargs
+    assert "X-LiveKit-SIP-Signature" in call_kwargs["headers"]
+
+    # Non-SIP rooms or non-empty metadata must not trigger SIP resolution
+    client.post.reset_mock()
+    assert await agent.resolve_sip_session_context(
+        "", room_name="sandbox-room", agent_name="calendar-assistant", client=client
+    ) is None
+    assert await agent.resolve_sip_session_context(
+        "non-empty", room_name="call-4001-xyz", agent_name="calendar-assistant", client=client
+    ) is None
+    client.post.assert_not_awaited()
+

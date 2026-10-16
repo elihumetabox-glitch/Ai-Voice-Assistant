@@ -296,12 +296,138 @@ async def list_active_threecx_integrations() -> list[dict[str, Any]]:
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """SELECT company_id, connection_name, pbx_hostname, app_id,
-                      route_point_dn, dids, transfer_destinations,
+                      route_point_dn, api_key_ciphertext, encryption_envelope,
+                      dids, transfer_destinations,
                       failure_action, failure_destination, state,
-                      credential_updated_at, last_checked_at
+                      credential_updated_at, last_checked_at, updated_at
                FROM threecx_integrations
                WHERE state = 'active'
-               ORDER BY company_id"""
+               ORDER BY updated_at DESC, company_id"""
         )
-        return [dict(row) for row in rows]
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["dids"] = [str(v).strip() for v in _json_list(item.get("dids")) if str(v).strip()]
+            item["transfer_destinations"] = [
+                str(v).strip() for v in _json_list(item.get("transfer_destinations")) if str(v).strip()
+            ]
+            results.append(item)
+        return results
+
+
+def _normalize_phone_digits(value: str | None) -> str:
+    if not value:
+        return ""
+    return "".join(ch for ch in str(value) if ch.isdigit())
+
+
+async def resolve_active_sip_tenant(
+    *,
+    dialed_number: str | None = None,
+    room_name: str | None = None,
+) -> Optional[dict[str, Any]]:
+    """Resolve the active 3CX tenant and its published profile for an inbound SIP trunk call."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT t.company_id,
+                      t.route_point_dn,
+                      t.dids,
+                      t.updated_at,
+                      p.version AS profile_version,
+                      COALESCE(cp.timezone, 'Indian/Mauritius') AS timezone
+               FROM threecx_integrations t
+               JOIN agent_profile_versions p
+                 ON p.company_id = t.company_id
+                AND p.lifecycle_state = 'published'
+               LEFT JOIN company_profiles cp
+                 ON cp.user_id = t.company_id
+               WHERE t.state = 'active'
+               ORDER BY t.updated_at DESC"""
+        )
+        if not rows:
+            return None
+
+        selected = None
+        target_raw = (dialed_number or "").strip()
+        target_digits = _normalize_phone_digits(target_raw)
+        if target_raw or target_digits:
+            for row in rows:
+                route_dn = str(row["route_point_dn"] or "").strip()
+                dids = [str(v).strip() for v in _json_list(row["dids"]) if str(v).strip()]
+                candidates = [route_dn, *dids]
+                candidate_digits = {_normalize_phone_digits(c) for c in candidates if _normalize_phone_digits(c)}
+                if target_raw in candidates or (target_digits and target_digits in candidate_digits):
+                    selected = dict(row)
+                    break
+
+        if selected is None:
+            selected = dict(rows[0])
+
+        company_id = str(selected["company_id"])
+        dids_list = [str(v).strip() for v in _json_list(selected["dids"]) if str(v).strip()]
+        matched_did = (
+            target_raw
+            if target_raw and target_raw in dids_list
+            else (dids_list[0] if dids_list else str(selected["route_point_dn"] or "4001"))
+        )
+
+        if room_name and room_name.strip():
+            clean_room = room_name.strip()[:255]
+            try:
+                async with conn.transaction():
+                    await conn.execute("SELECT set_config('app.company_id', $1, true)", company_id)
+                    await conn.execute(
+                        """INSERT INTO threecx_call_sessions
+                           (company_id, pbx_call_id, did, direction, state,
+                            claim_token, lease_expires_at, livekit_room)
+                           VALUES ($1, $2, $3, 'inbound', 'active', $4, NOW() + interval '1 hour', $5)
+                           ON CONFLICT (company_id, pbx_call_id) DO UPDATE SET
+                             state = 'active',
+                             updated_at = NOW()""",
+                        uuid.UUID(company_id),
+                        clean_room,
+                        matched_did[:64],
+                        uuid.uuid4(),
+                        clean_room,
+                    )
+            except Exception:
+                pass
+
+        return {
+            "company_id": company_id,
+            "profile_version": int(selected["profile_version"]),
+            "timezone": str(selected["timezone"] or "Indian/Mauritius"),
+            "route_point_dn": str(selected["route_point_dn"] or ""),
+            "did": matched_did,
+        }
+
+
+async def complete_sip_call_session(
+    *,
+    company_id: str,
+    room_name: str,
+    final_state: str = "ended",
+) -> bool:
+    """Mark an inbound SIP call session as ended or failed."""
+    if final_state not in {"ended", "failed"}:
+        final_state = "ended"
+    company_uuid = uuid.UUID(company_id)
+    clean_room = room_name.strip()[:255]
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.company_id', $1, true)", company_id)
+            result = await conn.execute(
+                """UPDATE threecx_call_sessions
+                   SET state = $3,
+                       updated_at = NOW(),
+                       ended_at = COALESCE(ended_at, NOW())
+                   WHERE company_id = $1 AND pbx_call_id = $2""",
+                company_uuid,
+                clean_room,
+                final_state,
+            )
+            return result.endswith("1")
+
 

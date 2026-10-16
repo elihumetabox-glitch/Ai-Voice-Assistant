@@ -260,6 +260,7 @@ try:
     from .session_context import (
         VerifiedSessionContext,
         _signed_context_message,
+        build_sip_resolution_request,
         load_verified_session_context,
         load_sip_pilot_context,
         require_bound_profile_snapshot,
@@ -269,6 +270,7 @@ except (ImportError, ValueError):
         from agent.session_context import (
             VerifiedSessionContext,
             _signed_context_message,
+            build_sip_resolution_request,
             load_verified_session_context,
             load_sip_pilot_context,
             require_bound_profile_snapshot,
@@ -277,10 +279,102 @@ except (ImportError, ValueError):
         from session_context import (
             VerifiedSessionContext,
             _signed_context_message,
+            build_sip_resolution_request,
             load_verified_session_context,
             load_sip_pilot_context,
             require_bound_profile_snapshot,
         )
+
+
+async def resolve_sip_session_context(
+    metadata: str | Mapping[str, Any] | None,
+    *,
+    room_name: str,
+    agent_name: str,
+    backend_url: str = BACKEND_URL,
+    ssl_context: Optional[ssl.SSLContext] = None,
+    client: Optional[httpx.AsyncClient] = None,
+) -> Optional[VerifiedSessionContext]:
+    """Dynamically resolve a signed tenant session context from the backend for inbound LiveKit SIP trunk calls."""
+    signed_req = build_sip_resolution_request(
+        metadata,
+        room_name=room_name,
+        agent_name=agent_name,
+    )
+    if signed_req is None:
+        return None
+    payload, signature = signed_req
+
+    async def _do_post(http_client: httpx.AsyncClient) -> Optional[VerifiedSessionContext]:
+        resp = await http_client.post(
+            f"{backend_url.rstrip('/')}/api/integrations/3cx/sip-session",
+            json=payload,
+            headers={"X-LiveKit-SIP-Signature": signature},
+        )
+        if resp.status_code != 200:
+            logger.warning(
+                "SIP session resolution returned status=%s for room=%s",
+                resp.status_code,
+                room_name,
+            )
+            return None
+        data = resp.json()
+        signed_metadata = data.get("signed_metadata")
+        if not signed_metadata:
+            return None
+        resolved = load_verified_session_context(signed_metadata)
+        if resolved is not None:
+            logger.info(
+                "Resolved active 3CX SIP tenant context: room=%s company_id=%s profile_version=%s",
+                room_name,
+                resolved.company_id,
+                resolved.profile_version,
+            )
+        return resolved
+
+    try:
+        if client is not None:
+            return await _do_post(client)
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(BACKEND_TIMEOUT_SECONDS, connect=5.0),
+            verify=ssl_context if isinstance(ssl_context, ssl.SSLContext) else True,
+            trust_env=False,
+        ) as http_client:
+            return await _do_post(http_client)
+    except Exception as exc:
+        logger.warning(
+            "SIP session resolution failed for room=%s (error_type=%s)",
+            room_name,
+            type(exc).__name__,
+        )
+        return None
+
+
+async def notify_sip_session_ended(
+    room_name: str,
+    session_context: VerifiedSessionContext,
+    *,
+    state: str = "ended",
+    backend_url: str = BACKEND_URL,
+    ssl_context: Optional[ssl.SSLContext] = None,
+) -> None:
+    """Best-effort notification to mark an inbound SIP call session ended in the backend."""
+    room_prefix = os.getenv("SIP_PILOT_ROOM_PREFIX", "call-").strip() or "call-"
+    if not room_name or not room_name.startswith(room_prefix):
+        return
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(5.0, connect=3.0),
+            verify=ssl_context if isinstance(ssl_context, ssl.SSLContext) else True,
+            trust_env=False,
+        ) as http_client:
+            await http_client.post(
+                f"{backend_url.rstrip('/')}/api/integrations/3cx/sip-session/end",
+                json={"room_name": room_name, "state": "failed" if state == "failed" else "ended"},
+                headers={"X-Verified-Session-Context": session_context.signed_metadata()},
+            )
+    except Exception:
+        pass
 
 
 def serialize_untrusted_company_data(value: Any) -> str:
@@ -1045,14 +1139,24 @@ async def entrypoint(ctx: JobContext) -> None:
     import numpy.fft
 
     logger.info("Connecting to room: %s", ctx.room.name)
+    ssl_context = ctx.proc.userdata.get("gemini_ssl_context")
     job = getattr(ctx, "job", None)
     job_metadata = getattr(job, "metadata", None)
+    resolved_agent_name = str(getattr(job, "agent_name", None) or AGENT_NAME)
     session_context = load_verified_session_context(job_metadata)
     if session_context is None and job_metadata in (None, ""):
         session_context = load_sip_pilot_context(
             job_metadata,
             room_name=ctx.room.name,
-            agent_name=str(getattr(job, "agent_name", None) or AGENT_NAME),
+            agent_name=resolved_agent_name,
+        )
+    if session_context is None and job_metadata in (None, ""):
+        session_context = await resolve_sip_session_context(
+            job_metadata,
+            room_name=ctx.room.name,
+            agent_name=resolved_agent_name,
+            backend_url=BACKEND_URL,
+            ssl_context=ssl_context if isinstance(ssl_context, ssl.SSLContext) else None,
         )
     if session_context is None:
         logger.error("LiveKit job rejected: verified session/company context is missing or invalid")
@@ -1060,7 +1164,6 @@ async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
 
     # 1. Initialize Gemini Realtime Live Multimodal Model
-    ssl_context = ctx.proc.userdata.get("gemini_ssl_context")
     http_options = None
     if isinstance(ssl_context, ssl.SSLContext):
         http_options = genai_types.HttpOptions(
@@ -1424,6 +1527,15 @@ async def entrypoint(ctx: JobContext) -> None:
             await lifecycle.stop()
 
         asyncio.create_task(_close_lifecycle())
+        asyncio.create_task(
+            notify_sip_session_ended(
+                ctx.room.name,
+                session_context,
+                state="failed" if "error" in close_reason.lower() else "ended",
+                backend_url=BACKEND_URL,
+                ssl_context=ssl_context if isinstance(ssl_context, ssl.SSLContext) else None,
+            )
+        )
         logger.info("Agent session cleanup scheduled: room=%s", ctx.room.name)
 
     logger.info("Starting AgentSession for room: %s", ctx.room.name)

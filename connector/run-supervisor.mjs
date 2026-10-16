@@ -224,7 +224,7 @@ function createTenantRuntime(tenantConfig) {
         const jwt = await at.toJwt();
 
         const room = new Room();
-        await room.connect(LIVEKIT_URL, jwt);
+        await room.connect(LIVEKIT_URL, jwt, { autoSubscribe: false });
 
         return await startVerifiedThreeCxLiveKitMediaBridge({
           room,
@@ -238,20 +238,29 @@ function createTenantRuntime(tenantConfig) {
         });
       };
 
-      const handlePbxFallback = async ({ pbxParticipantId, action, destination, reason }) => {
+      const handlePbxFallback = async ({
+        pbxParticipantId,
+        action,
+        failureAction,
+        destination,
+        failureDestination,
+        reason,
+      }) => {
+        const resolvedAction = failureAction || action;
+        const resolvedDestination = failureDestination ?? destination;
         const handle = client?.getParticipantHandle?.(pbxParticipantId);
         if (!handle) return false;
         try {
-          if (action === "transfer" && destination) {
-            await handle.transfer(destination, reason);
+          if (resolvedAction === "transfer" && resolvedDestination) {
+            await handle.transfer(resolvedDestination, reason);
             return true;
           }
-          if (action === "disconnect") {
+          if (resolvedAction === "disconnect") {
             await handle.drop();
             return true;
           }
         } catch (err) {
-          console.error(`[3CX Fallback] Failed to execute ${action} for participant ${pbxParticipantId}:`, err);
+          console.error(`[3CX Fallback] Failed to execute ${resolvedAction} for participant ${pbxParticipantId}:`, err);
           return false;
         }
         return false;
@@ -275,8 +284,20 @@ function createTenantRuntime(tenantConfig) {
         createMediaBridge,
         stopAgent,
         handlePbxFallback,
-        onSignal: (event, payload) => {
-          console.log(`[3CX Tenant Runtime ${tenantConfig.companyId}] ${event}`, payload ? JSON.stringify(payload) : "");
+        onSignal: (eventOrSignal, payload) => {
+          if (eventOrSignal && typeof eventOrSignal === "object") {
+            const { reason, event, ...rest } = eventOrSignal;
+            const label = event || reason || "signal";
+            console.log(
+              `[3CX Tenant Runtime ${tenantConfig.companyId}] ${label}`,
+              Object.keys(rest).length ? JSON.stringify(rest) : ""
+            );
+          } else {
+            console.log(
+              `[3CX Tenant Runtime ${tenantConfig.companyId}] ${eventOrSignal}`,
+              payload ? JSON.stringify(payload) : ""
+            );
+          }
         },
       });
     },
@@ -294,9 +315,18 @@ const supervisor = new MultiTenantSupervisor({
   fetchActiveTenants,
   createTenantRuntime,
   reconcileIntervalMs: RECONCILE_INTERVAL_MS,
-  onSignal: (event, payload) => {
+  onSignal: (eventOrSignal, payload) => {
     const timestamp = new Date().toISOString();
-    console.log(`[${timestamp}] [3CX Supervisor] ${event}`, payload ? JSON.stringify(payload) : "");
+    if (eventOrSignal && typeof eventOrSignal === "object") {
+      const { event, reason, ...rest } = eventOrSignal;
+      const label = event || reason || "signal";
+      console.log(
+        `[${timestamp}] [3CX Supervisor] ${label}`,
+        Object.keys(rest).length ? JSON.stringify(rest) : ""
+      );
+    } else {
+      console.log(`[${timestamp}] [3CX Supervisor] ${eventOrSignal}`, payload ? JSON.stringify(payload) : "");
+    }
   },
 });
 
@@ -305,7 +335,7 @@ async function main() {
 
   const shutdown = async (signal) => {
     console.log(`\n[3CX Supervisor] Received ${signal}, shutting down all tenant runtimes...`);
-    await supervisor.stop();
+    await supervisor.shutdown();
     console.log("[3CX Supervisor] Clean shutdown complete.");
     process.exit(0);
   };

@@ -421,23 +421,49 @@ async def threecx_save(payload: dict = Depends(verify_broker_request)):
 async def threecx_active_tenants(_authorized: bool = Depends(require_broker_secret)):
     from db.threecx import list_active_threecx_integrations
     integrations = await list_active_threecx_integrations()
-    return {
-        "tenants": [
+    tenants = []
+    for row in integrations:
+        company_id_str = str(row["company_id"])
+        ciphertext = row.get("api_key_ciphertext")
+        raw_envelope = row.get("encryption_envelope")
+        if ciphertext and raw_envelope:
+            try:
+                envelope = json.loads(raw_envelope) if isinstance(raw_envelope, str) else raw_envelope
+                await asyncio.to_thread(
+                    decrypt_secret,
+                    ciphertext,
+                    envelope,
+                    company_id=company_id_str,
+                    provider="threecx",
+                    field="client_secret",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Skipping active 3CX tenant with undecryptable credentials (error_type=%s)",
+                    type(exc).__name__,
+                )
+                continue
+        raw_dids = row.get("dids")
+        dids = json.loads(raw_dids) if isinstance(raw_dids, str) else (raw_dids or [])
+        raw_transfers = row.get("transfer_destinations")
+        transfer_destinations = (
+            json.loads(raw_transfers) if isinstance(raw_transfers, str) else (raw_transfers or [])
+        )
+        tenants.append(
             {
-                "companyId": str(row["company_id"]),
+                "companyId": company_id_str,
                 "connectionName": row["connection_name"],
                 "pbxHostname": row["pbx_hostname"],
                 "appId": row["app_id"],
                 "routePointDn": row["route_point_dn"],
-                "dids": row["dids"],
-                "transferDestinations": row["transfer_destinations"],
+                "dids": dids,
+                "transferDestinations": transfer_destinations,
                 "failureAction": row["failure_action"],
                 "failureDestination": row["failure_destination"],
                 "credentialUpdatedAt": row["credential_updated_at"].isoformat() if row.get("credential_updated_at") else None,
             }
-            for row in integrations
-        ]
-    }
+        )
+    return {"tenants": tenants}
 
 
 class TenantLeaseRequest(BaseModel):
@@ -448,49 +474,84 @@ class TenantLeaseRequest(BaseModel):
 async def threecx_acquire_tenant_lease(request: TenantLeaseRequest, _authorized: bool = Depends(require_broker_secret)):
     pool = await get_db_pool()
     company_uuid = uuid.UUID(request.companyId)
+    company_id_str = str(company_uuid)
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """SELECT company_id, connection_name, pbx_hostname, app_id, route_point_dn,
-                      client_secret_ciphertext, encryption_envelope, dids, transfer_destinations,
-                      failure_action, failure_destination, state
-               FROM threecx_integrations
-               WHERE company_id = $1 AND state = 'active'""",
-            company_uuid,
-        )
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.company_id', $1, true)", company_id_str)
+            row = await conn.fetchrow(
+                """SELECT company_id, connection_name, pbx_hostname, app_id, route_point_dn,
+                          api_key_ciphertext, encryption_envelope, dids, transfer_destinations,
+                          failure_action, failure_destination, state
+                   FROM threecx_integrations
+                   WHERE company_id = $1 AND state = 'active'""",
+                company_uuid,
+            )
+            profile_version = await conn.fetchval(
+                """SELECT version FROM agent_profile_versions
+                   WHERE company_id = $1 AND lifecycle_state = 'published'
+                   ORDER BY version DESC LIMIT 1""",
+                company_uuid,
+            )
+            if profile_version is None:
+                profile_version = await conn.fetchval(
+                    """SELECT COALESCE(MAX(version), 1) FROM agent_profile_versions
+                       WHERE company_id = $1""",
+                    company_uuid,
+                )
+            timezone_name = await conn.fetchval(
+                """SELECT timezone FROM company_profiles
+                   WHERE user_id = $1""",
+                company_uuid,
+            )
     if not row:
         raise HTTPException(status_code=404, detail="Active 3CX integration not found for company")
 
     envelope = json.loads(row["encryption_envelope"]) if isinstance(row["encryption_envelope"], str) else row["encryption_envelope"]
     client_secret = await asyncio.to_thread(
         decrypt_secret,
-        row["client_secret_ciphertext"],
+        row["api_key_ciphertext"],
         envelope,
-        company_id=str(row["company_id"]),
+        company_id=company_id_str,
         provider="threecx",
         field="client_secret",
     )
 
     expires_at_ms = int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp() * 1000)
     lease_id = f"lease-{uuid.uuid4().hex}"
+    dids = json.loads(row["dids"]) if isinstance(row["dids"], str) else (row["dids"] or [])
+    if not dids and row["route_point_dn"]:
+        dids = [str(row["route_point_dn"]).strip()]
+    transfer_destinations = (
+        json.loads(row["transfer_destinations"])
+        if isinstance(row["transfer_destinations"], str)
+        else (row["transfer_destinations"] or [])
+    )
+    resolved_timezone = str(timezone_name or "Indian/Mauritius").strip() or "Indian/Mauritius"
+    resolved_profile_version = int(profile_version or 1)
 
     return {
         "leaseId": lease_id,
-        "companyId": str(row["company_id"]),
+        "companyId": company_id_str,
         "expiresAt": expires_at_ms,
         "pbxBase": f"https://{row['pbx_hostname'].rstrip('/')}",
         "appId": row["app_id"],
         "appSecret": client_secret,
         "routePointDn": row["route_point_dn"],
-        "dids": json.loads(row["dids"]) if isinstance(row["dids"], str) else (row["dids"] or []),
-        "transferDestinations": json.loads(row["transfer_destinations"]) if isinstance(row["transfer_destinations"], str) else (row["transfer_destinations"] or []),
+        "dids": dids,
+        "transferDestinations": transfer_destinations,
         "failureAction": row["failure_action"],
         "failureDestination": row["failure_destination"],
         "tenantBinding": {
-            "companyId": str(row["company_id"]),
+            "companyId": company_id_str,
             "authSubject": "3cx-connector-service",
+            "timezone": resolved_timezone,
+            "profileVersion": resolved_profile_version,
+            "integrationId": company_id_str,
             "routePointDn": row["route_point_dn"],
-            "profileVersion": 1,
-            "timezone": "Indian/Mauritius",
+            "dids": dids,
+            "transferDestinations": transfer_destinations,
+            "failureAction": row["failure_action"],
+            "failureDestination": row["failure_destination"],
         },
     }
 

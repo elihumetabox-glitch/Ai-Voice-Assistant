@@ -122,6 +122,44 @@ def load_sip_pilot_context(
     )
 
 
+def build_sip_resolution_request(
+    metadata: str | Mapping[str, Any] | None,
+    *,
+    room_name: str,
+    agent_name: str,
+    signing_secret: Optional[str] = None,
+    now: Optional[float] = None,
+) -> Optional[tuple[Dict[str, Any], str]]:
+    """Build a signed payload and HMAC header for dynamic backend SIP tenant resolution."""
+    if metadata not in (None, ""):
+        return None
+    room_prefix = os.getenv("SIP_PILOT_ROOM_PREFIX", "call-").strip() or "call-"
+    if not room_name or not room_name.startswith(room_prefix):
+        return None
+    effective_secret = (
+        os.getenv("LIVEKIT_SESSION_CONTEXT_SECRET", SESSION_CONTEXT_SIGNING_SECRET)
+        if signing_secret is None
+        else signing_secret
+    )
+    if not effective_secret or not agent_name:
+        return None
+    issued_at = int(time.time() if now is None else now)
+    message = f"sip-resolve:{room_name}:{agent_name}:{issued_at}".encode("utf-8")
+    signature = hmac.new(
+        effective_secret.encode("utf-8"),
+        message,
+        hashlib.sha256,
+    ).hexdigest()
+    return (
+        {
+            "room_name": room_name,
+            "agent_name": agent_name,
+            "issued_at": issued_at,
+        },
+        signature,
+    )
+
+
 @dataclass(frozen=True)
 class VerifiedSessionContext:
     """Identity asserted by the authenticated LiveKit dispatch service.

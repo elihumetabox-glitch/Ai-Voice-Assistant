@@ -14,6 +14,7 @@ export class MultiTenantSupervisor {
     fetchActiveTenants,
     createTenantRuntime,
     reconcileIntervalMs = 15000,
+    failureBackoffMs = 300000,
     onSignal = () => {},
   }) {
     if (typeof fetchActiveTenants !== "function") {
@@ -32,8 +33,10 @@ export class MultiTenantSupervisor {
     this.fetchActiveTenants = fetchActiveTenants;
     this.createTenantRuntime = createTenantRuntime;
     this.reconcileIntervalMs = reconcileIntervalMs;
+    this.failureBackoffMs = failureBackoffMs;
     this.onSignal = onSignal;
     this.tenants = new Map(); // companyId -> { config, runtime, fingerprint, state }
+    this.failedTenants = new Map(); // companyId -> { fingerprint, retryAfter }
     this.timer = null;
     this.state = "idle";
     this.reconciling = false;
@@ -93,7 +96,13 @@ export class MultiTenantSupervisor {
       for (const [companyId, entry] of [...this.tenants.entries()]) {
         if (!activeMap.has(companyId)) {
           this.#signal("stopping_removed_tenant", { companyId });
+          this.failedTenants.delete(companyId);
           await this.#stopTenant(companyId, entry);
+        }
+      }
+      for (const companyId of [...this.failedTenants.keys()]) {
+        if (!activeMap.has(companyId)) {
+          this.failedTenants.delete(companyId);
         }
       }
 
@@ -103,9 +112,14 @@ export class MultiTenantSupervisor {
         const existing = this.tenants.get(companyId);
 
         if (!existing) {
+          const failed = this.failedTenants.get(companyId);
+          if (failed && failed.fingerprint === fingerprint && Date.now() < failed.retryAfter) {
+            continue;
+          }
           await this.#startTenant(companyId, config, fingerprint);
         } else if (existing.fingerprint !== fingerprint) {
           this.#signal("restarting_updated_tenant", { companyId });
+          this.failedTenants.delete(companyId);
           await this.#stopTenant(companyId, existing);
           await this.#startTenant(companyId, config, fingerprint);
         }
@@ -136,6 +150,7 @@ export class MultiTenantSupervisor {
 
     await Promise.allSettled(shutdownPromises);
     this.tenants.clear();
+    this.failedTenants.clear();
     this.state = "stopped";
     this.#signal("supervisor_stopped");
     return { stopped: true };
@@ -157,9 +172,16 @@ export class MultiTenantSupervisor {
         await runtime.start();
       }
       entry.state = "running";
+      this.failedTenants.delete(companyId);
       this.#signal("tenant_started", { companyId });
     } catch (err) {
       this.tenants.delete(companyId);
+      if (this.failureBackoffMs > 0) {
+        this.failedTenants.set(companyId, {
+          fingerprint,
+          retryAfter: Date.now() + this.failureBackoffMs,
+        });
+      }
       this.#signal("tenant_start_failed", { companyId, error: err.message });
     }
   }
