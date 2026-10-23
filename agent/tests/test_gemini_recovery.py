@@ -1,8 +1,59 @@
 import asyncio
 import json
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+for mod in [
+    "numpy", "numpy.fft", "livekit", "livekit.agents", "livekit.agents.llm",
+    "livekit.agents.voice", "livekit.agents.voice.events", "livekit.agents.utils",
+    "livekit.agents.types", "livekit.plugins", "livekit.plugins.google",
+    "livekit.plugins.google.realtime", "livekit.plugins.google.realtime.realtime_api",
+    "google", "google.genai", "google.genai.types"
+]:
+    if mod not in sys.modules:
+        sys.modules[mod] = MagicMock()
+
+class MockAPIConnectOptions:
+    def __init__(self, max_retry=3, retry_interval=2.0, timeout=10.0, **kwargs):
+        self.max_retry = max_retry
+        self.retry_interval = retry_interval
+        self.timeout = timeout
+    def _interval_for_retry(self, num_retries: int) -> float:
+        return self.retry_interval
+
+if not hasattr(sys.modules["livekit.agents.types"], "APIConnectOptions") or isinstance(sys.modules["livekit.agents.types"].APIConnectOptions, MagicMock):
+    sys.modules["livekit.agents.types"].APIConnectOptions = MockAPIConnectOptions
+if "types" in dir(sys.modules["livekit.agents"]):
+    sys.modules["livekit.agents"].types.APIConnectOptions = MockAPIConnectOptions
+
+class MockRealtimeModelFallbackAdapter:
+    def __init__(self, models=(), cooldown=30.0, regenerate_on_swap=False, **kwargs):
+        self._models = list(models)
+        self._cooldown = cooldown
+        self._regenerate_on_swap = regenerate_on_swap
+    def session(self, *args, **kwargs):
+        return MagicMock()
+
+if not hasattr(sys.modules["livekit.agents.llm"], "RealtimeModelFallbackAdapter") or isinstance(sys.modules["livekit.agents.llm"].RealtimeModelFallbackAdapter, MagicMock):
+    sys.modules["livekit.agents.llm"].RealtimeModelFallbackAdapter = MockRealtimeModelFallbackAdapter
+if "llm" in dir(sys.modules["livekit.agents"]):
+    sys.modules["livekit.agents"].llm.RealtimeModelFallbackAdapter = MockRealtimeModelFallbackAdapter
+
+class MockGoogleRealtimeModel:
+    def __init__(self, **kwargs):
+        self._sessions = set()
+
+if not hasattr(sys.modules["livekit.plugins.google.realtime.realtime_api"], "RealtimeModel") or isinstance(sys.modules["livekit.plugins.google.realtime.realtime_api"].RealtimeModel, MagicMock):
+    sys.modules["livekit.plugins.google.realtime.realtime_api"].RealtimeModel = MockGoogleRealtimeModel
+    sys.modules["livekit.plugins.google.realtime"].realtime_api.RealtimeModel = MockGoogleRealtimeModel
+    sys.modules["livekit.plugins.google"].realtime.realtime_api.RealtimeModel = MockGoogleRealtimeModel
+    sys.modules["livekit.plugins"].google.realtime.realtime_api.RealtimeModel = MockGoogleRealtimeModel
 
 from agent.gemini_recovery import (
     ExponentialAPIConnectOptions,

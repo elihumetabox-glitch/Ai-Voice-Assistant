@@ -25,7 +25,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-live")
 GEMINI_API_VERSION = os.getenv("GEMINI_API_VERSION", "v1beta")
 GEMINI_VOICE = os.getenv("GEMINI_VOICE", "Aoede")
-GEMINI_RECOVERY_ENABLED = os.getenv("GEMINI_RECOVERY_ENABLED", "false").strip().lower() in {
+GEMINI_RECOVERY_ENABLED = os.getenv("GEMINI_RECOVERY_ENABLED", "true").strip().lower() in {
     "1",
     "true",
     "yes",
