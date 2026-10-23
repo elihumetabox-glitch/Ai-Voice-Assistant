@@ -94,6 +94,7 @@ def issue_session_context(
     context: InternalSessionContext,
     profile_version: int | None = None,
     timezone_name: str | None = None,
+    session_id: str | None = None,
 ) -> str:
     """Re-sign verified tenant context for a LiveKit dispatch snapshot."""
     secret = os.getenv("LIVEKIT_SESSION_CONTEXT_SECRET", "")
@@ -106,10 +107,11 @@ def issue_session_context(
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError("A valid IANA timezone is required for session context") from exc
     issued_at = int(time.time())
+    effective_session_id = session_id if session_id is not None else context.session_id
     signature = hmac.new(
         secret.encode("utf-8"),
         _message(
-            context.session_id,
+            effective_session_id,
             context.company_id,
             context.auth_subject,
             issued_at,
@@ -119,7 +121,7 @@ def issue_session_context(
         hashlib.sha256,
     ).hexdigest()
     payload: dict[str, Any] = {
-        "session_id": context.session_id,
+        "session_id": effective_session_id,
         "company_id": context.company_id,
         "auth_subject": context.auth_subject,
         "issued_at": issued_at,

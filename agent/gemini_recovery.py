@@ -89,6 +89,11 @@ class DelayedRealtimeModel(GoogleRealtimeModel):
 class ObservableRealtimeFallbackAdapter(llm.RealtimeModelFallbackAdapter):
     """Expose successful internal swaps to the application lifecycle publisher."""
 
+    def __init__(self, *args: Any, models: Any = (), **kwargs: Any) -> None:
+        self._models = list(models)
+        self._regenerate_on_swap = kwargs.get("regenerate_on_swap", False)
+        super().__init__(*args, models=models, **kwargs)
+
     def session(self, *, turn_detection_disabled: bool = False):
         session = super().session(turn_detection_disabled=turn_detection_disabled)
         session.on("session_reconnected", lambda event: self.emit("recovery_succeeded", event))

@@ -235,6 +235,7 @@ function createTenantRuntime(tenantConfig) {
           expectedAgentName: LIVEKIT_AGENT_NAME,
           controller,
           sessionId,
+          maxBufferedMs: Number.parseInt(process.env.CONNECTOR_MAX_BUFFERED_MS || "1000", 10),
         });
       };
 

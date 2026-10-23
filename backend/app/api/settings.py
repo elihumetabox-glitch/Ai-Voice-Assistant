@@ -325,6 +325,7 @@ async def generate_livekit_token(
         context,
         resolved_profile_version,
         timezone_name=session_timezone,
+        session_id=resolved_session_id,
     )
 
     try:
