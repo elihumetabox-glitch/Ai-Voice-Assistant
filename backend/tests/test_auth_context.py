@@ -109,7 +109,23 @@ def test_context_acceptance_window_has_a_hard_short_lived_ceiling(monkeypatch):
         )
     )
     monkeypatch.setenv("LIVEKIT_SESSION_CONTEXT_MAX_AGE_SECONDS", "901")
-    assert verify_session_context(raw) is None
     assert load_verified_session_context(
         raw, signing_secret="context-test-secret", max_age_seconds=901
     ) is None
+
+
+def test_issue_session_context_allows_custom_session_id(monkeypatch):
+    monkeypatch.setenv("LIVEKIT_SESSION_CONTEXT_SECRET", "context-test-secret")
+    context = InternalSessionContext(
+        session_id="browser-auth-session-id",
+        company_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        auth_subject="neon-user-42",
+        timezone="Indian/Mauritius",
+    )
+    raw = issue_session_context(context, profile_version=1, session_id="resolved-room-session-id")
+    verified = verify_session_context(raw)
+    assert verified is not None
+    assert verified.session_id == "resolved-room-session-id"
+    assert verified.company_id == context.company_id
+    assert verified.auth_subject == context.auth_subject
+

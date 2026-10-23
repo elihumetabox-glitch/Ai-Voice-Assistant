@@ -12,7 +12,7 @@ export async function resolveDispatchedAgentIdentity({
   dispatchId,
   roomName,
   expectedAgentName = DEFAULT_AGENT_NAME,
-  timeoutMs = 10000,
+  timeoutMs = 25000,
   pollIntervalMs = 250,
   now = Date.now,
   sleep = delay,

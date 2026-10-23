@@ -6,7 +6,7 @@ Handles OAuth redirects, callback handling, connection status checking, and acco
 from datetime import datetime, timezone
 import json
 import logging
-from typing import Optional
+from typing import Any, Optional
 import urllib.parse
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
@@ -25,8 +25,8 @@ from db.tokens import get_oauth_connection_metadata
 logger = logging.getLogger("voice_bot.api.auth")
 router = APIRouter(prefix="/auth/google", tags=["auth"])
 
-def _resolve_redirect_uri(requested_uri: str | None) -> str:
-    if not requested_uri:
+def _resolve_redirect_uri(requested_uri: Any) -> str:
+    if not requested_uri or not isinstance(requested_uri, str):
         return settings.google_redirect_uri
     approved_origins = [o.strip().rstrip("/") for o in settings.cors_origins.split(",") if o.strip()]
     for origin in approved_origins:

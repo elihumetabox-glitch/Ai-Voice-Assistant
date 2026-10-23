@@ -1480,6 +1480,10 @@ async def entrypoint(ctx: JobContext) -> None:
     def on_data_received(data_packet: rtc.DataPacket):
         handle_incoming_data_packet(data_packet, session)
 
+    silence_watchdog_stop = asyncio.Event()
+    last_user_activity = [time.monotonic()]
+    agent_speaking = [False]
+
     # 4. Handle transcription synchronization via DataChannel
     @session.on("conversation_item_added")
     def on_conversation_item_added(event: ConversationItemAddedEvent):
@@ -1502,11 +1506,39 @@ async def entrypoint(ctx: JobContext) -> None:
         except Exception as exc:
             logger.warning("conversation_item_added listener failed (error_type=%s)", type(exc).__name__)
 
-    silence_watchdog_stop = asyncio.Event()
-    last_user_activity = [time.monotonic()]
-    agent_speaking = [False]
+    # 5. LiveKit 1.8+ AgentSession state change tracking
+    try:
+        @session.on("user_state_changed")
+        def _on_user_state_changed(event: Any = None):
+            last_user_activity[0] = time.monotonic()
+    except Exception:
+        pass
 
-    # Keep silence timer reset during speech activity
+    try:
+        @session.on("agent_state_changed")
+        def _on_agent_state_changed(event: Any = None):
+            new_state = getattr(event, "new_state", None)
+            if new_state == "speaking":
+                agent_speaking[0] = True
+                last_user_activity[0] = time.monotonic()
+            elif new_state in ("idle", "listening"):
+                agent_speaking[0] = False
+                last_user_activity[0] = time.monotonic()
+            elif new_state == "thinking":
+                last_user_activity[0] = time.monotonic()
+    except Exception:
+        pass
+
+    # 6. Active speakers tracking from WebRTC room
+    try:
+        @ctx.room.on("active_speakers_changed")
+        def _on_active_speakers_changed(speakers: Any = None):
+            if speakers:
+                last_user_activity[0] = time.monotonic()
+    except Exception:
+        pass
+
+    # 7. Backward-compatible speech events (for legacy and test mocks)
     for speech_event in ("user_started_speaking", "user_stopped_speaking"):
         try:
             @session.on(speech_event)
